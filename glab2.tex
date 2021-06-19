@@ -1,0 +1,112 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{positioning,calc,decorations.pathreplacing,shapes,fit}
+\usepackage{colortbl}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}%
+\newcommand{\xmark}{\ding{55}}%
+\usepackage{array, adjustbox,url}
+\usepackage{pifont,marvosym} % wasysym
+\usepackage{rotating,subfig}
+\usepackage{xspace}
+
+\title{GLab 2: Routing}
+
+\author{Christian Grothoff}
+\date{KW 49}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+For this lab you will write a set of small programs leading up to the
+implementation of an IP router.  While the driver you are given
+is written in C, you can use {\em any} language of your choice for the
+implementation (as long as you extend the {\tt Makefile} with adequate
+build rules).
+
+The basic setup is the same as in Glab 1.
+
+\subsection{ARP}
+
+Implement a program {\tt arp} that:
+\begin{enumerate}
+\item Watches for ARP queries on the Ethernet link
+\item Responds with ARP responses for your own IP address
+\item Reads IPv4 addresses from {\tt stdin} (in human-readable format),
+  issues ARP queries for those IPv4 addresses and outputs the
+  resulting MAC addresses.  The interactive command syntax should be
+  ``arp {\em IP-ADDR} {\em IFNAME}'' (i.e. each line is to be prefixed with
+  the letters ``arp '', followed by the IPv4 address and the name of
+  the network interface).  If the user just enteres ``arp'' without
+  an IP address, you should output the ARP table in the format
+  ``{\em IP} -$>$ {\em MAC} ({\em IFNAME})'' with one entry per line,
+  i.e.
+\begin{verbatim}
+10.54.25.15 -> 28:c6:3f:1a:0a:bf (eth1)
+\end{verbatim}
+  (note the leading ``0'' digit in {\tt 0a}).
+\item Provides an ARP cache so that it does not have to repeatedly
+  make ARP requests to the network for MAC addresses it already knows.
+\end{enumerate}
+Your programm should be called with the name of the interface, the IP
+address\footnote{You may support multiple IPs per network interface,
+  using a comma-separated list of IPs and network masks, but this is
+  not required.} for that interface and the network mask.  Example:
+\begin{verbatim}
+$ network-driver eth0 eth1 - \
+  arp eth0[IPV4:192.168.0.1/16] eth1[IPV4:10.0.0.3/24]
+\end{verbatim}
+This means {\tt eth0} is to be bound to 192.168.0.1 (netmask 255.255.0.0)
+and {\tt eth1} uses 10.0.0.3 (netmask 255.255.255.0).
+
+
+\subsection{Routing}
+
+Implement {\tt router} which routes IPv4 packets.
+\begin{enumerate}
+\item Populate your routing table from the network interface configuration
+  given on the command-line using the same syntax as with the {\tt arp}
+  program.
+\item Use the ARP logic to resolve the target MAC address.  You MUST
+  simply drop IP packets for destinations where you do not yet have the
+  next hop's MAC address, but you MUST then issue the ARP request to
+  obtain the destination's MAC instead (once per dropped IP packet).
+\item Make sure to decrement the TTL field and recompute the CRC.
+  % add link to logic implementing CRC!
+\item Generate ICMP messages for ``no route to host'' and ``TTL exceeded''.
+\item Support the syntax {\tt IFC[RO]=MTU} where {\tt MTU} is the
+  MTU for IFC.  Example: {\tt eth0=1500}.  Implement and test IPv4 fragmentation
+  (including {\em do not fragment}-flag support).
+\item Support dynamic updates to the routing table via {\tt stdin}.
+  Base your commands on the {\tt ip route} tool.  For example,
+  ``route list'' should output the routing table, and
+  ``route add 1.2.0.0/16 via 192.168.0.1 dev eth0'' should add
+  a route to {\tt 1.2.0.0/16} via the next hop {\tt 192.168.0.1}
+  which should be reachable via {\tt eth0}.  Implement at least
+  the {\tt route list}, {\tt route add} and {\tt route del} commands.
+\end{enumerate}
+
+You do not need to support VLANs, IP multicast or IP broadcast.
+
+\subsection{Suggested testing}
+
+Configure your router with {\tt eth1} using 192.168.0.1/16.  Configure
+{\tt eth2} using 10.0.0.1/8 and {\tt eth3} using 172.16.0.1/12.
+Connect your notebook as 10.0.0.2 using 10.0.0.1 as the default
+route. Set an MTU of 500 on {\tt eth3}.  Set a default route of
+192.168.0.2 on the router.
+
+Verify:
+\begin{itemize}
+\item Correct forwarding? % IP packets flow? Mac updated?
+\item Correct address resultion and caching? % ARP cache?
+\item Correct IP handling? % IP TTL decremented, ICMP? Checksum?
+\item Correct IP fragmentation? % Use eth3 for testing
+\end{itemize}
+
+\end{document}

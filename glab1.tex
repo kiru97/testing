@@ -1,0 +1,303 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{positioning,calc,decorations.pathreplacing,shapes,fit}
+\usepackage{colortbl}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}%
+\newcommand{\xmark}{\ding{55}}%
+\usepackage{array, adjustbox,url}
+\usepackage{pifont,marvosym} % wasysym
+\usepackage{rotating,subfig}
+\usepackage{xspace}
+
+\title{GLab 1: Switching}
+
+\author{Christian Grothoff}
+\date{KW 42}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+For this lab you will write a set of small programs leading up to the
+implementation of an Ethernet switch.  While the driver you are given
+is written in C, you can use {\em any} language of your choice for the
+implementation (as long as you extend the {\tt Makefile} with adequate
+build rules).
+
+Your programs should be {\tt executed} by the {\tt network-driver}.
+For this, you call
+\begin{verbatim}
+$ network-driver IFC1 ... IFCn - PROG ARGS
+\end{verbatim}
+where ``IFC1 ... IFCn'' is the list of interface names that you
+want {\tt network-driver} to support (i.e. ``lan0'', ``lan1'')
+and ``PROG'' is the name of your binary and ``ARGS'' are the
+command-line arguments to ``PROG''.  Note the ``-'' (single minus)
+between the last interface name and ``PROG''.  Also, ``PROG'' must
+be given with the path or be in the PATH.
+
+Once you start PROG like this, you can read Ethernet frames
+and end-user commands from ``stdin'' and write Ethernet
+frames (and end-user output) to ``stdout''.
+
+Note that you must follow the {\tt network-driver}'s particular
+format for inter-process communication when reading and writing.
+You will {\bf not} be communicating directly with the console!
+
+For testing, you will be given access to a USB Ethernet adapter with
+four Ethernet interfaces.  You should plug the adapter into the
+provided desktop and make your desktop act as a switch or router
+between the notebooks of your team.
+
+
+\section{Grab the instructions}
+
+First, clone the official {\tt skeleton} Git repository for your
+course.  Here, you will find the skeleton code for the GLab project.
+
+You can now develop your project with one of three possible setups:
+\begin{itemize}
+\item Using the 4-port USB adapter. This is the suggested setup, it
+  should be basically plug-and-go.
+\item Using virtual machines. This allows you to develop your code
+  without any special hardware on any GNU/Linux distribution. However,
+  it may be more confusing to see what is going on, and you will not
+  be able to easily hook up your system to the Netgear for testing
+  with VLANs.
+\item Using the provided BananaPi R2. The BananaPi R2 has a few
+  quirks. The worst one we are aware of right now is that its
+  standard Ethernet ports do not properly implement promoscious mode,
+  and that it sends out Ethernet frames with the FCS set to zero.
+  Both of these issues are problematic for the {\tt switch} and
+  {\tt vswitch} projects, but not for the {\tt arp} and {\tt router}
+  project.
+  
+  You can work around these issues by using Ethernet-USB adapters
+  instead of the Ethernet ports on the BananaPi R2 (you can and
+  should still use one of the Ethernet ports of the BananaPi R2 for
+  your management).
+\end{itemize}
+
+\subsection{Setup with virtual machines}
+
+Download a basic qemu VM, for example from
+\url{https://people.debian.org/~aurel32/qemu/amd64/}.
+
+Then launch your router with four network interfaces and
+the respective up scripts and disjoint MACs:
+\begin{verbatim}
+# qemu-system-x86_64 -hda wheezy.qcov2 \
+   -device e1000,netdev=net0,mac=10:10:A0:D0:C0:B1 \
+   -netdev socket,id=net0,listen=:10001 \
+   -device e1000,netdev=net1,mac=10:10:A0:D0:C0:B2 \
+   -netdev socket,id=net0,listen=:10002 \
+   -device e1000,netdev=net2,mac=10:10:A0:D0:C0:B3 \
+   -netdev socket,id=net0,listen=:10003 \
+   -device e1000,netdev=net3,mac=10:10:A0:D0:C0:B4 \
+   -netdev socket,id=net0,listen=:10004 
+\end{verbatim}
+Then, launch additional VMs to connect ``other'' systems
+to your router:
+\begin{verbatim}
+# cp wheezy.qcov2 wheezy0.qcov
+# qemu-system-x86_64 -hda wheezy0.qcov2 \
+   -device e1000,netdev=net0,mac=10:20:A0:D0:C0:B1 \
+   -netdev socket,id=net0,connect:10001
+# cp wheezy.qcov2 wheezy1.qcov
+# qemu-system-x86_64 -hda wheezy1.qcov2 \
+   -device e1000,netdev=net0,mac=10:20:A0:D0:C0:B2 \
+   -netdev socket,id=net0,connect:10002
+# cp wheezy.qcov2 wheezy2.qcov
+# qemu-system-x86_64 -hda wheezy2.qcov2 \
+   -device e1000,netdev=net0,mac=10:20:A0:D0:C0:B3 \
+   -netdev socket,id=net0,connect:10003
+# cp wheezy.qcov2 wheezy3.qcov
+# qemu-system-x86_64 -hda wheezy3.qcov2 \
+   -device e1000,netdev=net0,mac=10:20:A0:D0:C0:B4 \
+   -netdev socket,id=net0,connect:10004
+\end{verbatim}
+You may want to link up your VMs to your host to copy files:
+\begin{verbatim}
+# qemu-system-x86_64 ...
+  -net nic -net user,hostfwd=tcp::5555-:22
+\end{verbatim}
+Now your localhost port 5555 is forwarded to port 22 of the
+virtual machine.
+
+\subsection{Setup with BananaPi R2}
+
+You must copy the {\tt bpi.img} from the Git repository onto an SD card.
+Use
+\begin{verbatim}
+# dd if=bpi.img of=/dev/sdX
+# sync
+\end{verbatim}
+Replace ``X'' with the letter matching the SD card on your system.
+
+Next, you can put the SD card into the developer board and plug in
+the power supply.  You need to hold the ``Power on'' button in the
+top left corner of the board for $>$ 10 seconds to turn on the board!
+
+Now you can connect the {\em management} (WAN) Ethernet port to your
+notebook or desktop. Your system should use {\tt 192.168.0.1/24}.
+You should then be able to log into the development board via
+{\tt ssh 192.168.0.2} using the user {\tt root} and the password {\tt bananapi}.
+
+You can either develop the software on the development board itself
+(it is powerful enough to run {\tt zile} and {\tt gcc}) or
+cross-compile and copy the code over manually.  If you need
+additional software on the development board, configure IP forwarding
+and masquerading on your desktop system, the provided configuration
+already uses {\tt 192.168.0.1} as the default route.
+
+Note that the management (WAN) Ethernet port should only be used
+for compiling and configuration, the actual switching should be
+done using the four remaining network ports.
+
+\section{Build the driver}
+
+To comple the code, run:
+\begin{verbatim}
+# This requires gcc
+$ make
+# Creating network interfaces requires 'root' rights
+$ sudo chmod +s network-driver
+# Try it out:
+$ ./network-driver eth0 - ./parser
+\end{verbatim}
+Press CTRL-C to stop the {\tt network-driver} and {\tt parser}.
+
+
+
+\section{Understanding the driver}
+
+The output of the driver is always in binary and generally in network
+byte order.  You can use a tool like {\tt hexer} to make the output
+slightly more readable.
+
+The driver will always output a series of messages starting with
+a {\tt struct GLAB\_MessageHeader} that includes a type and a size.
+
+When the driver starts, it first writes a control message (of type 0)
+with payload that includes 6 bytes for each of the local interface's
+MAC addresses to your {\tt stdin}.  Henceforce, messages received
+of type 0 will be single lines of command-line input (including the
+'\\n'-terminator, but excluding the 0-terminator of C) as typed in
+by the user.
+
+Furthermore, the driver will output a {\tt struct GLAB\_MessageHeader}
+for each frame received.  The {\tt struct GLAB\_MessageHeader} will be
+followed by the actual network frame, starting with the Ethernet frame
+excluding preamble, delimiter and FCS.  The {\tt struct
+  GLAB\_MessageHeader} includes the total length of the subsequent
+frame (encoded in network byte order, the size includes the {\tt
+  struct GLAB\_MessageHeader}).  The fixed message type identifies the
+number of the network interface, counting from one (also in network
+byte order).
+
+In addition to writing received frames to your {\tt stdin}, the driver
+also tries to read from your {\tt stdout}.  Applications must send the
+same message format to {\tt stdout} that the driver sends them on {\tt
+  stdin}.  The driver does {\bf not} check that the source MAC is set
+correctly!
+
+To write to the console's {\tt stdout}, use a message type of 0.
+You may directly write to {\tt stderr} for error messages.
+
+\subsection{Provided code}
+
+You are given a few C snippets as starting points. However, these
+mostly serve to {\em illustrate} how to process the output from the
+driver. You are completely free to implement your application in {\em
+  any} programming language.  Note that each file includes about 20
+LOC of a licensing statement, so the functions provided should not
+provide a significant advantage for implementations in C.
+
+\begin{description}
+\item[sample-parser.c]{This file includes a simple starting point for
+  the parser.  It mostly shows how the frames are received and
+  a bit how to use the other C files. (82 LOC)}
+\item[glab.h]{A struct defining a MAC Address and a few common C includes. (90 LOC)}
+\item[print.c]{This file shows how to wrap messages to print them
+  via the driver. (112 LOC)}
+\item[loop.c]{This could be the main loop of your application. Includes
+  some basic logic to look at each frame, decide whether it is the MACs,
+  control or an Ethernet frame and then calls the respective function. (93 LOC)}
+\item[crc.c]{An implementation of checksum algorithms. (194 LOC)}
+\end{description}
+
+If you are using another programming language, you are free to re-use
+an existing CRC implementation in that language.
+
+
+\subsection{Frame parsing}
+
+Extend the simple frame {\tt parser} to:
+\begin{enumerate}
+\item Output your system's MAC address(es) in the canonical human-readable format.
+\item Output the source MAC, destination MAC, payload type and payload length
+  of each frame received. Confirm your results with {\tt wireshark}.
+\end{enumerate}
+
+\subsection{Implement a Hub}
+
+Implement {\tt hub} which forwards frames received on any interface to
+all other interfaces ({\tt eth0} through {\tt eth3}), without changing
+them at all.  The {\tt hub} binary should take the list of interfaces
+to use on the command line.
+
+\subsection{Implement a Switch}
+
+Implement {\tt switch} which forwards frames received on any
+interface to any other interface, but passively learns MAC addresses
+and optimizes subsequent traffic.
+
+\begin{itemize}
+\item Change external connections and ensure that switching still works!
+\item Create an ``attacker'' process that sends from billions of MAC
+  addresses.  Ensure your switch's learning table uses finite memory
+  (and ideally constant-time lookups).
+\end{itemize}
+
+\subsection{Implement a VSwitch}
+
+Implement {\em vswitch} which forwards frames received on any
+interface to any other interface, passively learns MAC addresses,
+and respects VLAN tags. As before, the command-line specifies the
+list of network interfaces you should switch on, but with
+additional options to specify the VLANS.  Example:
+\begin{verbatim}
+$ network-driver eth0 eth1 eth2 eth3 - \
+  vswitch eth0[T:1,2] eth1[U:1] eth2[U:2] eth3[U:2]
+\end{verbatim}
+This is supposed to run VLANs 1 and 2 tagged on {\tt eth0},
+and VLANs 1, 2 or 2 untagged on {\tt eth1}, {\tt eth2},
+or {\tt eth3} respectively.  Network interfaces specified
+without ``[]'' should operate untagged on VLAN 0.  It is
+not allowed to have interfaces accept both tagged and
+untagged frames.
+
+
+\subsection{Suggested testing}
+
+Test your implementation against the Netgear switch of the lab.
+Bridge a tagged VLAN ({\tt VID}$=3$) from the Netgear switch ({\tt
+  eth1}) with two untagged notebooks ({\tt eth2}, {\tt eth3}) using
+the BananaPi.
+
+Evaluation criteria:
+\begin{itemize}
+\item Correct forwarding? Do frames flow bidirectionally between eth2 and eth3?
+\item Correct switching? Is learning correctly implemented?
+\item Are VLAN tags added/stripped?
+\item Are correct limitations imposed on VLANs?
+      Is say $VID=4$ not forwarded to eth2/eth3?
+\end{itemize}
+
+
+\end{document}
